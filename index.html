@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pipeline Hazard Simulator</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="container">
+  <header>
+    <div class="header-left">
+      <span class="header-tag">Computer Architecture</span>
+      <h1>Pipeline <span>Hazard</span> Simulator</h1>
+    </div>
+    <div class="header-meta">
+      MIPS · RAW Hazard Detection<br>
+      Forwarding &amp; Stall Analysis
+    </div>
+  </header>
+
+  <section class="panel input-panel">
+    <div class="controls-grid">
+      <div class="input-group">
+        <label for="instructions-input">Instructions</label>
+        <textarea id="instructions-input" rows="5" spellcheck="false" placeholder="add $t2, $t0, $t3&#10;lw $t4, 0($t2)&#10;sub $t5, $t4, $t3">add $t2, $t0, $t3
+lw $t4, 0($t2)
+sub $t5, $t4, $t3</textarea>
+        <div id="error-message" class="error-message hidden"></div>
+      </div>
+      
+      <div class="options-group">
+        <div class="setting-row">
+          <label for="stages-select">Pipeline Stages:</label>
+          <select id="stages-select">
+            <option value="5-stage">5-Stage (IF, ID, EX, MEM, WB)</option>
+            <option value="4-stage">4-Stage (IF, ID, EX, MEM/WB)</option>
+          </select>
+        </div>
+        
+        <div class="setting-row toggle-wrapper">
+          <label for="forwarding-toggle" class="checkbox-label">
+            <input type="checkbox" id="forwarding-toggle" checked> <span class="toggle-text">Enable Forwarding</span>
+          </label>
+        </div>
+        
+        <div class="setting-row toggle-wrapper">
+          <label for="compare-toggle" class="checkbox-label">
+            <input type="checkbox" id="compare-toggle"> <span class="toggle-text">Compare Mode</span>
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <div class="button-group">
+      <button id="btn-run" class="btn primary">Run</button>
+      <button id="btn-step" class="btn secondary">Step</button>
+      <button id="btn-reset" class="btn outline">Reset</button>
+    </div>
+  </section>
+
+  <section id="simulator-view" class="view-section hidden">
+    <div id="compare-summary" class="summary-box hidden"></div>
+
+    <div class="tables-container">
+      <div id="main-table-wrapper" class="table-wrapper">
+        <h3 id="main-table-title" class="table-title hidden">Simulation Result</h3>
+        <div id="main-table"></div>
+      </div>
+      
+      <div id="compare-table-wrapper" class="table-wrapper hidden">
+        <h3 class="table-title">Without Forwarding</h3>
+        <div id="compare-table"></div>
+      </div>
+    </div>
+    
+    <div class="panel explanation-panel">
+      <h3>Event Log</h3>
+      <div id="event-log" class="log-container"></div>
+    </div>
+  </section>
+</div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
