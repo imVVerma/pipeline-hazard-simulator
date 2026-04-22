@@ -3,7 +3,9 @@ import { runSimulation } from './simulator.js';
 // DOM Elements
 const inputEl = document.getElementById('instructions-input');
 const errorMsgEl = document.getElementById('error-message');
+const exampleSelect = document.getElementById('example-select');
 const stagesSelect = document.getElementById('stages-select');
+const branchStrategySelect = document.getElementById('branch-strategy');
 const fwdToggle = document.getElementById('forwarding-toggle');
 const compareToggle = document.getElementById('compare-toggle');
 
@@ -35,6 +37,24 @@ btnStep.addEventListener('click', handleStep);
 btnReset.addEventListener('click', handleReset);
 inputEl.addEventListener('input', clearError);
 
+const examples = {
+  'raw-1': `add $t1, $t2, $t3\nsub $t4, $t1, $t5\nand $t6, $t1, $t7`,
+  'raw-2': `add $t1, $t2, $t3\nsub $t4, $t1, $t5\nor $t6, $t4, $t1\nxor $t7, $t6, $t4`,
+  'load-use-1': `lw $t1, 0($t2)\nadd $t3, $t1, $t4`,
+  'load-use-2': `lw $t1, 0($t2)\nsub $t5, $t6, $t7\nadd $t3, $t1, $t4`,
+  'control-1': `beq $t1, $t2, target\nadd $t3, $t4, $t5\ntarget:\nsub $t6, $t7, $t8`,
+  'control-2': `add $t0, $zero, $zero\nloop:\nadd $t0, $t0, $t1\nbeq $t0, $t2, loop\nsub $t3, $t4, $t5`,
+  'all-1': `add $t0, $zero, $zero\nlw $t1, 0($t0)\nadd $t2, $t1, $t0\nbeq $t2, $zero, loop\nsub $t3, $t2, $t1\nloop:\nsw $t3, 4($t0)`
+};
+
+exampleSelect.addEventListener('change', (e) => {
+  if (e.target.value && examples[e.target.value]) {
+    inputEl.value = examples[e.target.value];
+    clearError();
+  }
+  e.target.value = '';
+});
+
 function clearError() {
     inputEl.classList.remove('error');
     errorMsgEl.classList.add('hidden');
@@ -53,9 +73,11 @@ function showError(msg) {
 
 function getConfig(forceForwardingState = null) {
     const val = stagesSelect.value;
+    const branchStrat = branchStrategySelect.value;
     return {
         stages: val === '5-stage' ? 5 : 4,
-        forwardingEnabled: forceForwardingState !== null ? forceForwardingState : fwdToggle.checked
+        forwardingEnabled: forceForwardingState !== null ? forceForwardingState : fwdToggle.checked,
+        branchStrategy: branchStrat
     };
 }
 
@@ -102,6 +124,7 @@ function handleStep() {
             btnRun.disabled = true;
             inputEl.disabled = true;
             stagesSelect.disabled = true;
+            branchStrategySelect.disabled = true;
             fwdToggle.disabled = true;
             compareToggle.disabled = true;
             
@@ -135,6 +158,7 @@ function handleReset() {
     
     inputEl.disabled = false;
     stagesSelect.disabled = false;
+    branchStrategySelect.disabled = false;
     fwdToggle.disabled = false;
     compareToggle.disabled = false;
     

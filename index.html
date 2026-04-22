@@ -23,7 +23,27 @@
   <section class="panel input-panel">
     <div class="controls-grid">
       <div class="input-group">
-        <label for="instructions-input">Instructions</label>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+          <label for="instructions-input" style="margin-bottom: 0;">Instructions</label>
+          <select id="example-select" style="width: auto; padding: 0.25rem 1.8rem 0.25rem 0.5rem; font-size: 0.68rem; max-width: 180px;">
+            <option value="">Load Example...</option>
+            <optgroup label="RAW Data Hazards">
+              <option value="raw-1">Simple ALU RAW</option>
+              <option value="raw-2">Complex ALU Chain</option>
+            </optgroup>
+            <optgroup label="Load-Use Hazards">
+              <option value="load-use-1">Direct Load-Use Stall</option>
+              <option value="load-use-2">Delayed Interleaved Load</option>
+            </optgroup>
+            <optgroup label="Control Hazards">
+              <option value="control-1">Simple Branch Penalty</option>
+              <option value="control-2">Loop Structure</option>
+            </optgroup>
+            <optgroup label="Comprehensive">
+              <option value="all-1">Mixed Pipeline Stress</option>
+            </optgroup>
+          </select>
+        </div>
         <textarea id="instructions-input" rows="5" spellcheck="false" placeholder="add $t2, $t0, $t3&#10;lw $t4, 0($t2)&#10;sub $t5, $t4, $t3">add $t2, $t0, $t3
 lw $t4, 0($t2)
 sub $t5, $t4, $t3</textarea>
@@ -36,6 +56,15 @@ sub $t5, $t4, $t3</textarea>
           <select id="stages-select">
             <option value="5-stage">5-Stage (IF, ID, EX, MEM, WB)</option>
             <option value="4-stage">4-Stage (IF, ID, EX, MEM/WB)</option>
+          </select>
+        </div>
+        
+        <div class="setting-row">
+          <label for="branch-strategy">Branch Prediction:</label>
+          <select id="branch-strategy">
+            <option value="predict-not-taken">Predict Not Taken (0 Cycle Penalty)</option>
+            <option value="stall-id">Resolve in ID (1 Cycle Penalty)</option>
+            <option value="stall-ex">Resolve in EX (2 Cycle Penalty)</option>
           </select>
         </div>
         

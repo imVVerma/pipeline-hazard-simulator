@@ -12,15 +12,27 @@ export function runSimulation(instructionsText, config) {
 }
 
 function parseInstructions(text) {
-  const lines = text.split('\n').map(l => l.trim()).filter(l => l);
+  const rawLines = text.split('\n');
   const instructions = [];
   
-  for (let i = 0; i < lines.length; i++) {
-    const raw = lines[i];
+  for (let i = 0; i < rawLines.length; i++) {
+    let originalRaw = rawLines[i].trim();
+    if (!originalRaw) continue;
+    
+    // Strip labels (e.g. "loop:" or "L1: add")
+    let raw = originalRaw;
+    const labelMatch = raw.match(/^[a-zA-Z0-9_\-]+:\s*/);
+    if (labelMatch) {
+      raw = raw.slice(labelMatch[0].length).trim();
+    }
+    
+    // If it was just a label line, skip processing it
+    if (!raw) continue;
+    
     // basic parsing: op arg1, arg2, arg3 OR op arg1, offset(arg2)
     const parts = raw.replace(/,/g, ' ').replace(/\(/g, ' ').replace(/\)/g, ' ').split(/\s+/).filter(p => p);
     
-    if (parts.length < 2) return { error: `Line ${i + 1}: Invalid instruction format '${raw}'` };
+    if (parts.length < 2) return { error: `Line ${i + 1}: Invalid instruction format '${originalRaw}'` };
     
     const op = parts[0].toLowerCase();
     let dest = null;
@@ -41,7 +53,7 @@ function parseInstructions(text) {
       }
     }
     
-    instructions.push({ raw, op, dest, src });
+    instructions.push({ raw: originalRaw, op, dest, src });
   }
   
   if (instructions.length === 0) return { error: "No instructions provided" };
@@ -160,6 +172,29 @@ function simulate(instructions, config) {
 
 function checkStalls(i, states, config, stages, cycle, hazards) {
     let curr = states[i];
+    
+    // Check Control Hazard (Branch Penalty)
+    if (i > 0) {
+        let prev = states[i-1];
+        let op = prev.instr.op;
+        if (op && ['beq', 'bne', 'j', 'jal', 'jr', 'blez', 'bgtz'].includes(op)) {
+            if (config.branchStrategy && config.branchStrategy !== 'predict-not-taken') {
+                 // penalty is 1 for 'stall-id', 2 for 'stall-ex'
+                 let resolveLimit = config.branchStrategy === 'stall-id' ? 2 : 3;
+                 
+                 // if curr is in IF (waiting to proceed to ID), and the branch hasn't cleared the penalty pipeline distance
+                 if (curr.stageIdx === 0 && prev.stageIdx <= resolveLimit) {
+                     let reason = `Control Hazard — Waiting for branch resolution`;
+                     if (curr.stalls === 0) {
+                         hazards.push({ msg: `Cycle ${cycle}: I${i+1} stalled — Control hazard (Branch penalty)` });
+                     }
+                     curr.stalls++;
+                     return { shouldStall: true, reason: reason };
+                 }
+            }
+        }
+    }
+
     let srcRegs = curr.instr.src;
     
     if (!srcRegs || srcRegs.length === 0) return { shouldStall: false };
