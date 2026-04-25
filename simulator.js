@@ -39,17 +39,17 @@ function parseInstructions(text) {
     let src = [];
     
     // Register regex: matches $t0, R1, $1, etc.
-    const isReg = (p) => /^[rR$]\d+|^\$[a-z][a-z0-9]/.test(p);
-    
+    const isReg = p => /^[Rr\$][a-z0-9]+$/i.test(p);
+
     if (['sw', 'sh', 'sb', 'beq', 'bne'].includes(op)) {
       dest = null;
-      src = parts.slice(1).filter(p => isReg(p));
+      src = parts.slice(1).filter(isReg);
     } else if (['j', 'jal', 'jr'].includes(op)) {
       dest = null; 
-      src = parts.slice(1).filter(p => isReg(p));
+      src = parts.slice(1).filter(isReg);
     } else {
       // standard R-type or I-type ALU where 1st arg is dest
-      const regs = parts.slice(1).filter(p => isReg(p));
+      const regs = parts.slice(1).filter(isReg);
       if (regs.length > 0) {
         dest = regs[0];
         src = regs.slice(1);
@@ -83,6 +83,9 @@ function simulate(instructions, config) {
   const n = states.length;
   
   while (states.some(s => !s.finished)) {
+    // --- Snapshot stageIdx at START of cycle so stall checks use consistent positions ---
+    const snapshot = states.map(s => s.stageIdx);
+
     // Fill previous empty cycles with 'empty' cells if needed (to ensure accurate alignment)
     for (let i = 0; i < n; i++) {
       while (states[i].rowCells.length < cycle - 1) {
@@ -97,24 +100,24 @@ function simulate(instructions, config) {
         let cell = null;
         
         if (state.stageIdx === -1) {
-            // IF stage availability check based on structural resources
-            // A simple pipeline: instruction i can enter IF when i-1 enters ID
+            // Instruction i can enter IF only when instruction i-1 has MOVED to ID.
+            // This prevents multiple instructions from occupying IF and matches standard fetch behavior.
             if (i === 0 || states[i-1].stageIdx >= 1) {
                 state.stageIdx = 0;
                 cell = { type: 'stage', label: stages[0], cycle, instrIndex: i };
             } else {
-                // Must wait to enter IF pipeline
-                continue; 
+                continue;
             }
         } else {
-            // Already active. Determine if stalling.
-            let stallInfo = checkStalls(i, states, config, stages, cycle, hazards);
-            
-            // Structural check: previous instruction still in the SAME next stage means we block
+            // Already active. Stall check uses start-of-cycle snapshot.
+            let stallInfo = checkStalls(i, states, snapshot, config, stages, cycle, hazards);
+
+            // Structural check: use LIVE stageIdx of prev (already advanced this cycle)
+            // An instruction cannot enter a stage if the previous instruction is still in it.
             let structuralStall = false;
             if (i > 0) {
-               let prev = states[i-1];
-               if (!prev.finished && prev.stageIdx <= state.stageIdx) {
+               // If next stage for current (state.stageIdx + 1) is <= prev's current stage, it's a conflict
+               if (!states[i-1].finished && states[i-1].stageIdx <= state.stageIdx + 1) {
                    structuralStall = true;
                }
             }
@@ -138,7 +141,7 @@ function simulate(instructions, config) {
                     let tooltip = '';
                     
                     if (config.forwardingEnabled && ['EX', 'MEM', 'MEM/WB'].includes(label)) {
-                        let fwdInfo = checkForwarding(i, states, config, stages);
+                        let fwdInfo = checkForwarding(i, states, snapshot, config, stages);
                         if (fwdInfo.forwarded) {
                             label += ' (FWD)';
                             type = 'fwd';
@@ -161,7 +164,15 @@ function simulate(instructions, config) {
     if (cycle > 100) break; // infinite loop guard
   }
   
-  totalCycles = cycle - 1;
+  // totalCycles = last cycle that contained an actual stage cell (not the finishing cycle)
+  let lastActiveCycle = 0;
+  for (let i = 0; i < n; i++) {
+    for (let cell of states[i].rowCells) {
+      if (cell.type !== 'empty' && cell.cycle > lastActiveCycle) lastActiveCycle = cell.cycle;
+    }
+  }
+  totalCycles = lastActiveCycle || (cycle - 1);
+
   for (let i = 0; i < n; i++) {
      let row = states[i].rowCells;
      while (row.length < totalCycles) {
@@ -173,92 +184,103 @@ function simulate(instructions, config) {
   return { instructions, table, hazards, totalCycles };
 }
 
-function checkStalls(i, states, config, stages, cycle, hazards) {
+function checkStalls(i, states, snapshot, config, stages, cycle, hazards) {
     let curr = states[i];
-    
-    // Check Control Hazard (Branch Penalty)
+    const wbStage   = stages.length - 1;  // index of last stage (MEM/WB or WB)
+    const exStage   = 2;                   // index of EX stage
+
+    // ── Control Hazard (Branch Penalty) ──────────────────────────────────────
     if (i > 0) {
         let prev = states[i-1];
         let op = prev.instr.op;
         if (op && ['beq', 'bne', 'j', 'jal', 'jr', 'blez', 'bgtz'].includes(op)) {
             if (config.branchStrategy && config.branchStrategy !== 'predict-not-taken') {
-                 // penalty is 1 for 'stall-id', 2 for 'stall-ex'
                  let resolveLimit = config.branchStrategy === 'stall-id' ? 2 : 3;
-                 
-                 // if curr is in IF (waiting to proceed to ID), and the branch hasn't cleared the penalty pipeline distance
-                 if (curr.stageIdx === 0 && prev.stageIdx <= resolveLimit) {
+                 if (curr.stageIdx === 0 && snapshot[i-1] <= resolveLimit) {
                      let reason = `Control Hazard — Waiting for branch resolution`;
                      if (curr.stalls === 0) {
                          hazards.push({ msg: `Cycle ${cycle}: I${i+1} stalled — Control hazard (Branch penalty)` });
                      }
                      curr.stalls++;
-                     return { shouldStall: true, reason: reason };
+                     return { shouldStall: true, reason };
                  }
             }
         }
     }
 
+    // ── Data Hazard (RAW) ─────────────────────────────────────────────────────
     let srcRegs = curr.instr.src;
-    
     if (!srcRegs || srcRegs.length === 0) return { shouldStall: false };
-    
-    for (let d = 1; d <= 2; d++) {
-       let prevIdx = i - d;
-       if (prevIdx < 0) continue;
-       
-       let prev = states[prevIdx];
-       let destReg = prev.instr.dest;
-       
-       if (!destReg) continue;
-       
-       if (srcRegs.includes(destReg)) {
-           if (!config.forwardingEnabled) {
-               // Must wait until WB is completely done
-               if (curr.stageIdx === 1) { // Current in ID
-                   let wbStage = stages.length - 1;
-                   if (prev.stageIdx < wbStage) {
-                       let msg = `Waiting for ${destReg} — RAW hazard`;
-                       if (curr.stalls === 0) {
-                           hazards.push({ msg: `Cycle ${cycle}: I${i+1} stalled — depends on ${destReg} written by I${prevIdx+1} (RAW)`});
-                       }
-                       curr.stalls++;
-                       return { shouldStall: true, reason: msg };
-                   }
-               }
-           } else {
-               // Forwarding enabled
-               if (curr.stageIdx === 1) { // In ID
-                   if (prev.instr.op === 'lw') {
-                       // Load-Use
-                       let memStage = config.stages === 5 ? 3 : 3; 
-                       if (prev.stageIdx < memStage) { // Need prev to finish MEM
-                           let msg = `Waiting for ${destReg} — Load-Use hazard`;
-                           if (curr.stalls === 0) {
-                               hazards.push({ msg: `Cycle ${cycle}: I${i+1} stalled — Load-use constraint on ${destReg} from I${prevIdx+1}`});
-                           }
-                           curr.stalls++;
-                           return { shouldStall: true, reason: msg };
-                       }
-                   } else {
-                       // ALU-ALU
-                       let exStage = 2;
-                       if (prev.stageIdx < exStage) {
-                           let msg = `Waiting for ${destReg} — RAW hazard`;
-                           if (curr.stalls === 0) {
-                                hazards.push({ msg: `Cycle ${cycle}: I${i+1} stalled — depends on I${prevIdx+1} EX`});
-                           }
-                           curr.stalls++;
-                           return { shouldStall: true, reason: msg };
-                       }
-                   }
-               }
-           }
-       }
+
+    if (!config.forwardingEnabled) {
+        // WITHOUT forwarding: stall in IF (stageIdx=0).
+        // Consumer waits in IF until producer reaches MEM/WB (register written).
+        if (curr.stageIdx !== 0) return { shouldStall: false };
+
+        for (let d = 1; d <= 2; d++) {
+            let prevIdx = i - d;
+            if (prevIdx < 0) continue;
+            let prev     = states[prevIdx];
+            let prevSnap = snapshot[prevIdx];
+            let destReg  = prev.instr.dest;
+            if (!destReg || !srcRegs.includes(destReg) || prev.finished) continue;
+
+            if (prevSnap < wbStage) {
+                let msg = `Waiting for ${destReg} — RAW hazard (no forwarding)`;
+                if (curr.stalls === 0)
+                    hazards.push({ msg: `Cycle ${cycle}: I${i+1} stalled — depends on ${destReg} written by I${prevIdx+1} (RAW)` });
+                curr.stalls++;
+                return { shouldStall: true, reason: msg };
+            }
+        }
+    } else {
+        // WITH forwarding:
+        if (config.stages === 5) {
+            // 5-stage load-use: MEM-EX forwarding needs consumer's EX to align with
+            // producer's WB. Stall 1 cycle IN IF (stageIdx=0) while prevSnap < exStage=2.
+            if (curr.stageIdx === 0) {
+                let prevIdx = i - 1;
+                if (prevIdx >= 0) {
+                    let prev     = states[prevIdx];
+                    let prevSnap = snapshot[prevIdx];
+                    let destReg  = prev.instr.dest;
+                    if (destReg && srcRegs.includes(destReg) && prev.instr.op === 'lw' && !prev.finished) {
+                        if (prevSnap < exStage) {   // exStage = 2
+                            let msg = `Waiting for ${destReg} — Load-Use hazard`;
+                            if (curr.stalls === 0)
+                                hazards.push({ msg: `Cycle ${cycle}: I${i+1} stalled — Load-use on ${destReg} from I${prevIdx+1}` });
+                            curr.stalls++;
+                            return { shouldStall: true, reason: msg };
+                        }
+                    }
+                }
+            }
+        } else {
+            // 4-stage load-use (MEM/WB combined): stall 1 cycle IN ID (stageIdx=1).
+            if (curr.stageIdx === 1) {
+                let prevIdx = i - 1;
+                if (prevIdx >= 0) {
+                    let prev     = states[prevIdx];
+                    let prevSnap = snapshot[prevIdx];
+                    let destReg  = prev.instr.dest;
+                    if (destReg && srcRegs.includes(destReg) && prev.instr.op === 'lw' && !prev.finished) {
+                        if (prevSnap < wbStage) {   // wbStage = 3 for 4-stage
+                            let msg = `Waiting for ${destReg} — Load-Use hazard`;
+                            if (curr.stalls === 0)
+                                hazards.push({ msg: `Cycle ${cycle}: I${i+1} stalled — Load-use on ${destReg} from I${prevIdx+1}` });
+                            curr.stalls++;
+                            return { shouldStall: true, reason: msg };
+                        }
+                    }
+                }
+            }
+        }
+        // ALU-ALU (any distance): forwarding resolves in time — no stall needed.
     }
     return { shouldStall: false };
 }
 
-function checkForwarding(i, states, config, stages) {
+function checkForwarding(i, states, snapshot, config, stages) {
     let curr = states[i];
     let srcRegs = curr.instr.src;
     
@@ -271,10 +293,10 @@ function checkForwarding(i, states, config, stages) {
         let destReg = prev.instr.dest;
         
         if (destReg && srcRegs.includes(destReg)) {
-           // Forwarding check
-           if (curr.stageIdx === 2) { 
-               return { forwarded: true, reason: `Value forwarded from I${prevIdx+1}` };
-           }
+            // Annotate FWD when consumer is now in EX (stageIdx 2)
+            if (curr.stageIdx === 2) {
+                return { forwarded: true, reason: `Value forwarded from I${prevIdx+1}` };
+            }
         }
     }
     return { forwarded: false };
