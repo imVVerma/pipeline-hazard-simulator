@@ -38,15 +38,18 @@ function parseInstructions(text) {
     let dest = null;
     let src = [];
     
+    // Register regex: matches $t0, R1, $1, etc.
+    const isReg = (p) => /^[rR$]\d+|^\$[a-z][a-z0-9]/.test(p);
+    
     if (['sw', 'sh', 'sb', 'beq', 'bne'].includes(op)) {
       dest = null;
-      src = parts.slice(1).filter(p => p.startsWith('$'));
+      src = parts.slice(1).filter(p => isReg(p));
     } else if (['j', 'jal', 'jr'].includes(op)) {
       dest = null; 
-      src = parts.slice(1).filter(p => p.startsWith('$'));
+      src = parts.slice(1).filter(p => isReg(p));
     } else {
       // standard R-type or I-type ALU where 1st arg is dest
-      const regs = parts.slice(1).filter(p => p.startsWith('$'));
+      const regs = parts.slice(1).filter(p => isReg(p));
       if (regs.length > 0) {
         dest = regs[0];
         src = regs.slice(1);

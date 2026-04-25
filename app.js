@@ -3,25 +3,26 @@ import { runSimulation } from './simulator.js';
 // DOM Elements
 const inputEl = document.getElementById('instructions-input');
 const errorMsgEl = document.getElementById('error-message');
-const exampleSelect = document.getElementById('example-select');
 const stagesSelect = document.getElementById('stages-select');
 const branchStrategySelect = document.getElementById('branch-strategy');
 const fwdToggle = document.getElementById('forwarding-toggle');
 const compareToggle = document.getElementById('compare-toggle');
 
+const exampleSelect = document.getElementById('example-select');
 const btnRun = document.getElementById('btn-run');
 const btnStep = document.getElementById('btn-step');
 const btnReset = document.getElementById('btn-reset');
 
+const btnAddInstr = document.getElementById('btn-add-instr');
+const btnClearInstr = document.getElementById('btn-clear-instr');
+const instructionList = document.getElementById('instruction-list');
+
 const simulatorView = document.getElementById('simulator-view');
-const mainTableWrapper = document.getElementById('main-table-wrapper');
 const mainTableContainer = document.getElementById('main-table');
 const mainTableTitle = document.getElementById('main-table-title');
-
 const compareTableWrapper = document.getElementById('compare-table-wrapper');
 const compareTableContainer = document.getElementById('compare-table');
 const compareSummary = document.getElementById('compare-summary');
-
 const eventLogContainer = document.getElementById('event-log');
 
 // State
@@ -31,29 +32,124 @@ let stepCycle = 0;
 let maxCycles = 0;
 let isStepMode = false;
 
+const MAX_INSTRUCTIONS = 10;
+
 // Event Listeners
 btnRun.addEventListener('click', runFullSimulation);
 btnStep.addEventListener('click', handleStep);
 btnReset.addEventListener('click', handleReset);
-inputEl.addEventListener('input', clearError);
-
-const examples = {
-  'raw-1': `add $t1, $t2, $t3\nsub $t4, $t1, $t5\nand $t6, $t1, $t7`,
-  'raw-2': `add $t1, $t2, $t3\nsub $t4, $t1, $t5\nor $t6, $t4, $t1\nxor $t7, $t6, $t4`,
-  'load-use-1': `lw $t1, 0($t2)\nadd $t3, $t1, $t4`,
-  'load-use-2': `lw $t1, 0($t2)\nsub $t5, $t6, $t7\nadd $t3, $t1, $t4`,
-  'control-1': `beq $t1, $t2, target\nadd $t3, $t4, $t5\ntarget:\nsub $t6, $t7, $t8`,
-  'control-2': `add $t0, $zero, $zero\nloop:\nadd $t0, $t0, $t1\nbeq $t0, $t2, loop\nsub $t3, $t4, $t5`,
-  'all-1': `add $t0, $zero, $zero\nlw $t1, 0($t0)\nadd $t2, $t1, $t0\nbeq $t2, $zero, loop\nsub $t3, $t2, $t1\nloop:\nsw $t3, 4($t0)`
-};
+btnAddInstr.addEventListener('click', () => addInstructionRow());
+btnClearInstr.addEventListener('click', clearAllInstructions);
+inputEl.addEventListener('input', () => {
+    clearError();
+    syncFromTextarea();
+});
 
 exampleSelect.addEventListener('change', (e) => {
-  if (e.target.value && examples[e.target.value]) {
-    inputEl.value = examples[e.target.value];
-    clearError();
-  }
-  e.target.value = '';
+    if (e.target.value && examples[e.target.value]) {
+        inputEl.value = examples[e.target.value];
+        syncFromTextarea();
+        clearError();
+    }
+    e.target.value = '';
 });
+
+// Examples using R-registers
+const examples = {
+  'raw-1': `ADD R1, R2, R3\nSUB R4, R1, R5\nAND R6, R1, R7`,
+  'raw-2': `ADD R1, R2, R3\nSUB R4, R1, R5\nOR R6, R4, R1\nXOR R7, R6, R4`,
+  'load-use-1': `LW R1, 0(R2)\nADD R3, R1, R4`,
+  'load-use-2': `LW R1, 0(R2)\nSUB R5, R6, R7\nADD R3, R1, R4`,
+  'control-1': `BEQ R1, R2, target\nADD R3, R4, R5\ntarget:\nSUB R6, R7, R8`,
+};
+
+function addInstructionRow(data = { op: 'ADD', r1: '', r2: '', r3: '' }) {
+    const rowCount = instructionList.children.length;
+    if (rowCount >= MAX_INSTRUCTIONS) {
+        showError(`Maximum of ${MAX_INSTRUCTIONS} instructions allowed.`);
+        return;
+    }
+
+    const row = document.createElement('div');
+    row.className = 'instruction-row';
+    row.innerHTML = `
+        <select class="instr-op">
+            <option value="ADD" ${data.op === 'ADD' ? 'selected' : ''}>ADD</option>
+            <option value="SUB" ${data.op === 'SUB' ? 'selected' : ''}>SUB</option>
+            <option value="LW" ${data.op === 'LW' ? 'selected' : ''}>LW</option>
+            <option value="SW" ${data.op === 'SW' ? 'selected' : ''}>SW</option>
+            <option value="BEQ" ${data.op === 'BEQ' ? 'selected' : ''}>BEQ</option>
+            <option value="BNE" ${data.op === 'BNE' ? 'selected' : ''}>BNE</option>
+        </select>
+        <input type="text" class="instr-r1" placeholder="R1" value="${data.r1}">
+        <input type="text" class="instr-r2" placeholder="R2" value="${data.r2}">
+        <input type="text" class="instr-r3" placeholder="R3" value="${data.r3}">
+        <button class="btn-remove">×</button>
+    `;
+
+    row.querySelector('.btn-remove').addEventListener('click', () => {
+        row.remove();
+        syncToTextarea();
+    });
+
+    row.querySelectorAll('input, select').forEach(el => {
+        el.addEventListener('input', syncToTextarea);
+    });
+
+    instructionList.appendChild(row);
+    syncToTextarea();
+}
+
+function clearAllInstructions() {
+    instructionList.innerHTML = '';
+    inputEl.value = '';
+    clearError();
+}
+
+function syncToTextarea() {
+    const lines = [];
+    const rows = instructionList.querySelectorAll('.instruction-row');
+    rows.forEach(row => {
+        const op = row.querySelector('.instr-op').value;
+        const r1 = row.querySelector('.instr-r1').value.trim();
+        const r2 = row.querySelector('.instr-r2').value.trim();
+        const r3 = row.querySelector('.instr-r3').value.trim();
+        
+        if (op === 'LW' || op === 'SW') {
+            lines.push(`${op} ${r1}, ${r2}(${r3})`);
+        } else if (op === 'BEQ' || op === 'BNE') {
+            lines.push(`${op} ${r1}, ${r2}, ${r3}`);
+        } else {
+            lines.push(`${op} ${r1}, ${r2}, ${r3}`);
+        }
+    });
+    inputEl.value = lines.join('\n');
+}
+
+function syncFromTextarea() {
+    // Basic sync back to visual rows (optional, but good for when examples are loaded)
+    const text = inputEl.value.trim();
+    if (!text) {
+        instructionList.innerHTML = '';
+        return;
+    }
+
+    const lines = text.split('\n');
+    instructionList.innerHTML = '';
+    
+    lines.forEach(line => {
+        if (instructionList.children.length >= MAX_INSTRUCTIONS) return;
+        
+        const parts = line.replace(/,/g, ' ').replace(/\(/g, ' ').replace(/\)/g, ' ').split(/\s+/).filter(p => p);
+        if (parts.length >= 2) {
+            const op = parts[0].toUpperCase();
+            const r1 = parts[1] || '';
+            const r2 = parts[2] || '';
+            const r3 = parts[3] || '';
+            addInstructionRow({ op, r1, r2, r3 });
+        }
+    });
+}
 
 function clearError() {
     inputEl.classList.remove('error');
@@ -84,8 +180,12 @@ function getConfig(forceForwardingState = null) {
 function runFullSimulation() {
     try {
         const text = inputEl.value;
-        const config = getConfig();
+        if (!text.trim()) {
+            showError("Please enter at least one instruction.");
+            return;
+        }
         
+        const config = getConfig();
         currentSimResult = runSimulation(text, config);
         
         if (compareToggle.checked) {
@@ -106,9 +206,12 @@ function runFullSimulation() {
 
 function handleStep() {
     if (!isStepMode) {
-        // Init step mode
         try {
             const text = inputEl.value;
+            if (!text.trim()) {
+                showError("Please enter at least one instruction.");
+                return;
+            }
             const config = getConfig();
             currentSimResult = runSimulation(text, config);
             
@@ -121,12 +224,7 @@ function handleStep() {
             isStepMode = true;
             maxCycles = Math.max(currentSimResult.totalCycles, currentCompareResult ? currentCompareResult.totalCycles : 0);
             stepCycle = 1;
-            btnRun.disabled = true;
-            inputEl.disabled = true;
-            stagesSelect.disabled = true;
-            branchStrategySelect.disabled = true;
-            fwdToggle.disabled = true;
-            compareToggle.disabled = true;
+            disableInputs(true);
             
         } catch(e) {
             showError(e.message);
@@ -146,6 +244,18 @@ function handleStep() {
     renderUI(true);
 }
 
+function disableInputs(disabled) {
+    btnRun.disabled = disabled;
+    inputEl.disabled = disabled;
+    stagesSelect.disabled = disabled;
+    branchStrategySelect.disabled = disabled;
+    fwdToggle.disabled = disabled;
+    compareToggle.disabled = disabled;
+    btnAddInstr.disabled = disabled;
+    btnClearInstr.disabled = disabled;
+    instructionList.querySelectorAll('input, select, button').forEach(el => el.disabled = disabled);
+}
+
 function handleReset() {
     currentSimResult = null;
     currentCompareResult = null;
@@ -155,28 +265,15 @@ function handleReset() {
     
     simulatorView.classList.add('hidden');
     clearError();
-    
-    inputEl.disabled = false;
-    stagesSelect.disabled = false;
-    branchStrategySelect.disabled = false;
-    fwdToggle.disabled = false;
-    compareToggle.disabled = false;
-    
-    btnRun.disabled = false;
-    btnStep.disabled = false;
+    disableInputs(false);
     btnStep.textContent = "Step";
 }
 
 function renderUI(stepByStep = false) {
     simulatorView.classList.remove('hidden');
     
-    // Render main table
-    mainTableTitle.classList.remove('hidden');
-    mainTableTitle.textContent = compareToggle.checked ? (fwdToggle.checked ? "With Forwarding" : "Without Forwarding") : "Simulation Result";
-    
     mainTableContainer.innerHTML = generateTableHTML(currentSimResult, stepByStep ? stepCycle : null);
     
-    // Render compare table
     if (currentCompareResult && compareToggle.checked) {
         compareTableWrapper.classList.remove('hidden');
         compareTableContainer.innerHTML = generateTableHTML(currentCompareResult, stepByStep ? stepCycle : null);
@@ -186,27 +283,22 @@ function renderUI(stepByStep = false) {
         let d2 = currentCompareResult.totalCycles;
         let diff = Math.abs(d1 - d2);
         
-        if (fwdToggle.checked) {
-           compareSummary.textContent = `With forwarding: ${d1} cycles. Without: ${d2} cycles. ${diff} cycles saved.`;
-        } else {
-           compareSummary.textContent = `Without forwarding: ${d1} cycles. With forwarding: ${d2} cycles. ${diff} cycles saved.`;
-        }
+        compareSummary.textContent = fwdToggle.checked 
+            ? `With forwarding: ${d1} cycles. Without: ${d2} cycles. ${diff} cycles saved.`
+            : `Without forwarding: ${d1} cycles. With: ${d2} cycles. ${diff} cycles saved.`;
     } else {
         compareTableWrapper.classList.add('hidden');
         compareSummary.classList.add('hidden');
     }
     
-    // Render Logs (up to current stepCycle if stepping)
     renderLogs(currentSimResult.hazards, stepByStep ? stepCycle : maxCycles);
-    
     attachHoverListeners();
 }
 
 function generateTableHTML(simResult, limitCycle) {
     const totalCycles = limitCycle ? limitCycle : simResult.totalCycles;
     
-    let html = '<table><thead><tr>';
-    html += '<th>Instruction</th>';
+    let html = '<table><thead><tr><th>Instruction</th>';
     for (let c = 1; c <= totalCycles; c++) {
         html += `<th class="${c === limitCycle ? 'active-col' : ''}">${c}</th>`;
     }
@@ -216,8 +308,7 @@ function generateTableHTML(simResult, limitCycle) {
         let instr = simResult.instructions[i];
         let deps = findDependencies(i, simResult.instructions);
         
-        let rowClass = `row-instr row-idx-${i}`;
-        html += `<tr class="${rowClass}" data-idx="${i}" data-src="${deps.join(',')}">`;
+        html += `<tr class="row-instr row-idx-${i}" data-idx="${i}" data-src="${deps.join(',')}">`;
         html += `<td class="instr-col">${instr.raw}</td>`;
         
         let rowData = simResult.table[i];
@@ -239,15 +330,10 @@ function generateTableHTML(simResult, limitCycle) {
 
 function renderLogs(hazards, currentCycle) {
     eventLogContainer.innerHTML = '';
-    
-    let validHazards = hazards;
-    if (currentCycle) {
-        validHazards = hazards.filter(h => {
-            let match = h.msg.match(/Cycle (\d+)/);
-            if (match) return parseInt(match[1]) <= currentCycle;
-            return true;
-        });
-    }
+    let validHazards = currentCycle ? hazards.filter(h => {
+        let match = h.msg.match(/Cycle (\d+)/);
+        return match ? parseInt(match[1]) <= currentCycle : true;
+    }) : hazards;
     
     if (validHazards.length === 0) {
         eventLogContainer.innerHTML = '<div class="log-entry">No hazards detected.</div>';
@@ -263,57 +349,36 @@ function renderLogs(hazards, currentCycle) {
 }
 
 function findDependencies(i, instructions) {
-    // Return array of instruction indices that instruction i depends on heavily
     let deps = [];
     let curr = instructions[i];
     if (!curr.src) return deps;
-    
     for (let j = 0; j < i; j++) {
-        let prev = instructions[j];
-        if (prev.dest && curr.src.includes(prev.dest)) {
-            deps.push(j);
-        }
+        if (instructions[j].dest && curr.src.includes(instructions[j].dest)) deps.push(j);
     }
     return deps;
 }
 
 function attachHoverListeners() {
-    const tableCells = document.querySelectorAll('td.cell-stage, td.cell-stall, td.cell-fwd');
-    
-    tableCells.forEach(cell => {
+    document.querySelectorAll('td.cell-stage, td.cell-stall, td.cell-fwd').forEach(cell => {
         cell.addEventListener('mouseenter', e => {
             const tr = e.target.closest('tr');
-            if (!tr) return;
-            
             const idx = tr.getAttribute('data-idx');
             const srcs = tr.getAttribute('data-src');
-            
-            // Highlight this row
             tr.classList.add('highlighted-row');
-            
-            // Highlight source rows
-            if (srcs) {
-                let srcArray = srcs.split(',');
-                srcArray.forEach(parentIdx => {
-                    if(parentIdx !== "") {
-                        document.querySelectorAll(`.row-idx-${parentIdx}`).forEach(r => r.classList.add('highlighted-row'));
-                    }
-                });
-            }
-            
-            // Highlight dependent rows (where their src matches this idx)
+            if (srcs) srcs.split(',').forEach(p => { if(p!=="") document.querySelectorAll(`.row-idx-${p}`).forEach(r => r.classList.add('highlighted-row'))});
             document.querySelectorAll('tr.row-instr').forEach(r => {
                 let rSrcs = r.getAttribute('data-src');
-                if (rSrcs) {
-                    if (rSrcs.split(',').includes(idx)) {
-                        r.classList.add('highlighted-row');
-                    }
-                }
+                if (rSrcs && rSrcs.split(',').includes(idx)) r.classList.add('highlighted-row');
             });
         });
-        
-        cell.addEventListener('mouseleave', () => {
-            document.querySelectorAll('tr.highlighted-row').forEach(r => r.classList.remove('highlighted-row'));
-        });
+        cell.addEventListener('mouseleave', () => document.querySelectorAll('tr.highlighted-row').forEach(r => r.classList.remove('highlighted-row')));
     });
+}
+
+// Initial instructions
+syncFromTextarea();
+if (instructionList.children.length === 0) {
+    addInstructionRow({ op: 'ADD', r1: 'R1', r2: 'R2', r3: 'R3' });
+    addInstructionRow({ op: 'SUB', r1: 'R4', r2: 'R1', r3: 'R5' });
+    addInstructionRow({ op: 'LW', r1: 'R6', r2: '0', r3: 'R1' });
 }
