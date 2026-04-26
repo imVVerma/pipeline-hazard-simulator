@@ -67,8 +67,10 @@ function parseInstructions(text) {
 function simulate(instructions, config) {
   const stages = config.stages === 5 ? ['IF', 'ID', 'EX', 'MEM', 'WB'] : ['IF', 'ID', 'EX', 'MEM/WB'];
   
-  let table = [];
-  let hazards = [];
+  let table     = [];
+  let hazards   = [];
+  let stallCount = 0;
+  let fwdCount   = 0;
   let totalCycles = 0;
   
   let states = instructions.map((ins, i) => ({
@@ -123,6 +125,7 @@ function simulate(instructions, config) {
             }
             
             if (stallInfo.shouldStall || structuralStall) {
+                stallCount++;
                 cell = { 
                     type: 'stall', 
                     label: 'STALL', 
@@ -137,16 +140,23 @@ function simulate(instructions, config) {
                     state.finished = true;
                 } else {
                     let label = stages[state.stageIdx];
-                    let type = 'stage';
+                    let type  = 'stage';
                     let tooltip = '';
                     
-                    if (config.forwardingEnabled && ['EX', 'MEM', 'MEM/WB'].includes(label)) {
+                    if (config.forwardingEnabled && label === 'EX') {
                         let fwdInfo = checkForwarding(i, states, snapshot, config, stages);
                         if (fwdInfo.forwarded) {
-                            label += ' (FWD)';
-                            type = 'fwd';
+                            label   = 'EX (FWD)';
+                            type    = 'fwd';
                             tooltip = fwdInfo.reason;
-                            hazards.push({ msg: `Cycle ${cycle}: I${i+1} resumes — ${fwdInfo.reason}` });
+                            fwdCount++;
+                            // Log one entry per forwarded register
+                            fwdInfo.events.forEach(evt => {
+                                hazards.push({
+                                    kind: 'fwd',
+                                    msg: `Cycle ${cycle}: ${evt.register} forwarded from I${evt.fromInstr} (${evt.fromStage}) → I${i+1} (EX)`
+                                });
+                            });
                         }
                     }
                     
@@ -181,32 +191,13 @@ function simulate(instructions, config) {
      table.push(row);
   }
   
-  return { instructions, table, hazards, totalCycles };
+  return { instructions, table, hazards, totalCycles, stallCount, fwdCount };
 }
 
 function checkStalls(i, states, snapshot, config, stages, cycle, hazards) {
     let curr = states[i];
-    const wbStage   = stages.length - 1;  // index of last stage (MEM/WB or WB)
-    const exStage   = 2;                   // index of EX stage
-
-    // ── Control Hazard (Branch Penalty) ──────────────────────────────────────
-    if (i > 0) {
-        let prev = states[i-1];
-        let op = prev.instr.op;
-        if (op && ['beq', 'bne', 'j', 'jal', 'jr', 'blez', 'bgtz'].includes(op)) {
-            if (config.branchStrategy && config.branchStrategy !== 'predict-not-taken') {
-                 let resolveLimit = config.branchStrategy === 'stall-id' ? 2 : 3;
-                 if (curr.stageIdx === 0 && snapshot[i-1] <= resolveLimit) {
-                     let reason = `Control Hazard — Waiting for branch resolution`;
-                     if (curr.stalls === 0) {
-                         hazards.push({ msg: `Cycle ${cycle}: I${i+1} stalled — Control hazard (Branch penalty)` });
-                     }
-                     curr.stalls++;
-                     return { shouldStall: true, reason };
-                 }
-            }
-        }
-    }
+    const wbStage = stages.length - 1;   // index of last stage (MEM/WB or WB)
+    const exStage = 2;                    // index of EX stage
 
     // ── Data Hazard (RAW) ─────────────────────────────────────────────────────
     let srcRegs = curr.instr.src;
@@ -228,7 +219,7 @@ function checkStalls(i, states, snapshot, config, stages, cycle, hazards) {
             if (prevSnap < wbStage) {
                 let msg = `Waiting for ${destReg} — RAW hazard (no forwarding)`;
                 if (curr.stalls === 0)
-                    hazards.push({ msg: `Cycle ${cycle}: I${i+1} stalled — depends on ${destReg} written by I${prevIdx+1} (RAW)` });
+                    hazards.push({ kind: 'stall', msg: `Cycle ${cycle}: I${i+1} stalled — RAW on ${destReg} from I${prevIdx+1} (no forwarding)` });
                 curr.stalls++;
                 return { shouldStall: true, reason: msg };
             }
@@ -245,10 +236,10 @@ function checkStalls(i, states, snapshot, config, stages, cycle, hazards) {
                     let prevSnap = snapshot[prevIdx];
                     let destReg  = prev.instr.dest;
                     if (destReg && srcRegs.includes(destReg) && prev.instr.op === 'lw' && !prev.finished) {
-                        if (prevSnap < exStage) {   // exStage = 2
-                            let msg = `Waiting for ${destReg} — Load-Use hazard`;
+                        if (prevSnap < exStage) {
+                            let msg = `Stall: load-use on ${destReg} — forwarding insufficient (LW result not yet available)`;
                             if (curr.stalls === 0)
-                                hazards.push({ msg: `Cycle ${cycle}: I${i+1} stalled — Load-use on ${destReg} from I${prevIdx+1}` });
+                                hazards.push({ kind: 'stall', msg: `Cycle ${cycle}: I${i+1} stalled — Load-use on ${destReg} from I${prevIdx+1} (forwarding cannot eliminate stall)` });
                             curr.stalls++;
                             return { shouldStall: true, reason: msg };
                         }
@@ -264,10 +255,10 @@ function checkStalls(i, states, snapshot, config, stages, cycle, hazards) {
                     let prevSnap = snapshot[prevIdx];
                     let destReg  = prev.instr.dest;
                     if (destReg && srcRegs.includes(destReg) && prev.instr.op === 'lw' && !prev.finished) {
-                        if (prevSnap < wbStage) {   // wbStage = 3 for 4-stage
-                            let msg = `Waiting for ${destReg} — Load-Use hazard`;
+                        if (prevSnap < wbStage) {
+                            let msg = `Stall: load-use on ${destReg} — forwarding insufficient (LW result not yet available)`;
                             if (curr.stalls === 0)
-                                hazards.push({ msg: `Cycle ${cycle}: I${i+1} stalled — Load-use on ${destReg} from I${prevIdx+1}` });
+                                hazards.push({ kind: 'stall', msg: `Cycle ${cycle}: I${i+1} stalled — Load-use on ${destReg} from I${prevIdx+1} (forwarding cannot eliminate stall)` });
                             curr.stalls++;
                             return { shouldStall: true, reason: msg };
                         }
@@ -281,23 +272,38 @@ function checkStalls(i, states, snapshot, config, stages, cycle, hazards) {
 }
 
 function checkForwarding(i, states, snapshot, config, stages) {
-    let curr = states[i];
+    let curr    = states[i];
     let srcRegs = curr.instr.src;
-    
     if (!srcRegs || srcRegs.length === 0) return { forwarded: false };
-    
+
+    // Only annotate forwarding when the consumer just entered EX (stageIdx === 2)
+    if (curr.stageIdx !== 2) return { forwarded: false };
+
+    const events = [];
+    const seen   = new Set(); // avoid duplicate register events
+
     for (let d = 1; d <= 2; d++) {
         let prevIdx = i - d;
         if (prevIdx < 0) continue;
-        let prev = states[prevIdx];
+
+        let prev    = states[prevIdx];
         let destReg = prev.instr.dest;
-        
-        if (destReg && srcRegs.includes(destReg)) {
-            // Annotate FWD when consumer is now in EX (stageIdx 2)
-            if (curr.stageIdx === 2) {
-                return { forwarded: true, reason: `Value forwarded from I${prevIdx+1}` };
-            }
-        }
+        if (!destReg || !srcRegs.includes(destReg) || seen.has(destReg)) continue;
+
+        // Determine which pipeline register the value is forwarded from:
+        //   d=1, producer snapshot=2 (EX)  → forward from EX/MEM register
+        //   d=2, producer snapshot=3 (MEM) → forward from MEM/WB register
+        const producerSnap = snapshot[prevIdx];
+        const fromStage    = producerSnap === 2 ? 'EX' : 'MEM';
+
+        seen.add(destReg);
+        events.push({ register: destReg, fromInstr: prevIdx + 1, fromStage });
     }
-    return { forwarded: false };
+
+    if (events.length === 0) return { forwarded: false };
+
+    const reason = events
+        .map(e => `${e.register}: I${e.fromInstr}(${e.fromStage})→I${i+1}(EX)`)
+        .join(', ');
+    return { forwarded: true, events, reason };
 }

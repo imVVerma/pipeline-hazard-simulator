@@ -1,0 +1,13 @@
+{
+  "name": "pipeline-hazard-simulator",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "An interactive Pipeline Hazard Simulation Applet",
+  "main": "app.js",
+  "scripts": {
+    "dev": "python3 -m http.server 8000",
+    "start": "python3 -m http.server 8000"
+  },
+  "author": "",
+  "license": "ISC"
+}

@@ -11,45 +11,41 @@
 <div class="container">
   <header>
     <div class="header-left">
-      <span class="header-tag">Computer Architecture</span>
+      <span class="header-tag">CS2011 · Plaksha University</span>
       <h1>Pipeline <span>Hazard</span> Simulator</h1>
     </div>
     <div class="header-meta">
-      MIPS · RAW Hazard Detection<br>
+      RAW Hazard Detection<br>
       Forwarding &amp; Stall Analysis
     </div>
   </header>
 
   <section class="panel input-panel">
     <div class="controls-grid">
-    <div class="instruction-setup">
-      <div class="setup-header">
-        <label>Instruction Setup</label>
-        <div class="setup-actions">
-          <select id="example-select" style="width: auto; padding: 0.25rem 1.8rem 0.25rem 0.5rem; font-size: 0.68rem; margin-right: 0.5rem;">
-            <option value="">Load Example...</option>
-            <option value="raw-1">Simple RAW</option>
-            <option value="raw-2">ALU Chain</option>
-            <option value="load-use-1">Load-Use Stall</option>
-            <option value="load-use-2">Delayed Load</option>
-            <option value="control-1">Branch Penalty</option>
-          </select>
-          <button id="btn-add-instr" class="btn-icon" title="Add Instruction">+</button>
-          <button id="btn-clear-instr" class="btn-icon" title="Clear All">×</button>
+
+      <!-- LEFT: Instruction Input -->
+      <div class="instruction-setup">
+        <div class="setup-header">
+          <label>Enter Instructions</label>
+          <div class="setup-actions">
+            <button id="btn-add-instr" class="btn-icon" title="Add Instruction">+</button>
+            <button id="btn-clear-instr" class="btn-icon" title="Clear All">×</button>
+          </div>
         </div>
+
+        <div id="instruction-list" class="instruction-list">
+          <!-- Instruction rows added by JS -->
+        </div>
+
+        <div class="textarea-fallback">
+          <label for="instructions-input">Raw Instructions</label>
+          <textarea id="instructions-input" rows="4" spellcheck="false"
+            placeholder="ADD R1, R2, R3&#10;LW R4, 0(R1)&#10;SUB R5, R4, R2"></textarea>
+        </div>
+        <div id="error-message" class="error-message hidden"></div>
       </div>
-      
-      <div id="instruction-list" class="instruction-list">
-        <!-- Instruction rows will be added here -->
-      </div>
-      
-      <div class="textarea-fallback">
-        <label for="instructions-input">Or Edit Raw Code</label>
-        <textarea id="instructions-input" rows="5" spellcheck="false" placeholder="ADD R1, R2, R3&#10;LW R4, 0(R1)&#10;SUB R5, R4, R2"></textarea>
-      </div>
-      <div id="error-message" class="error-message hidden"></div>
-    </div>
-      
+
+      <!-- RIGHT: Pipeline Config -->
       <div class="options-group">
         <div class="setting-row">
           <label for="stages-select">Pipeline Stages:</label>
@@ -58,59 +54,44 @@
             <option value="4-stage">4-Stage (IF, ID, EX, MEM/WB)</option>
           </select>
         </div>
-        
-        <div class="setting-row">
-          <label for="branch-strategy">Branch Prediction:</label>
-          <select id="branch-strategy">
-            <option value="predict-not-taken">Predict Not Taken (0 Cycle Penalty)</option>
-            <option value="stall-id">Resolve in ID (1 Cycle Penalty)</option>
-            <option value="stall-ex">Resolve in EX (2 Cycle Penalty)</option>
-          </select>
-        </div>
-        
+
         <div class="setting-row toggle-wrapper">
           <label for="forwarding-toggle" class="checkbox-label">
-            <input type="checkbox" id="forwarding-toggle" checked> <span class="toggle-text">Enable Forwarding</span>
-          </label>
-        </div>
-        
-        <div class="setting-row toggle-wrapper">
-          <label for="compare-toggle" class="checkbox-label">
-            <input type="checkbox" id="compare-toggle"> <span class="toggle-text">Compare Mode</span>
+            <input type="checkbox" id="forwarding-toggle" checked>
+            <span class="toggle-text">Enable Forwarding</span>
           </label>
         </div>
       </div>
-    </div>
+
+    </div><!-- /.controls-grid -->
 
     <div class="button-group">
-      <button id="btn-run" class="btn primary">Run</button>
-      <button id="btn-step" class="btn secondary">Step</button>
+      <button id="btn-run"   class="btn primary">Run</button>
+      <button id="btn-step"  class="btn secondary">Step</button>
       <button id="btn-reset" class="btn outline">Reset</button>
     </div>
   </section>
 
+  <!-- Simulation Output -->
   <section id="simulator-view" class="view-section hidden">
-    <div id="compare-summary" class="summary-box hidden"></div>
+
+    <div id="stats-bar" class="stats-bar hidden"></div>
 
     <div class="tables-container">
       <div id="main-table-wrapper" class="table-wrapper">
-        <h3 id="main-table-title" class="table-title hidden">Simulation Result</h3>
+        <h3 id="main-table-title" class="table-title hidden">Pipeline Execution</h3>
         <div id="main-table"></div>
       </div>
-      
-      <div id="compare-table-wrapper" class="table-wrapper hidden">
-        <h3 class="table-title">Without Forwarding</h3>
-        <div id="compare-table"></div>
-      </div>
     </div>
-    
+
     <div class="panel explanation-panel">
-      <h3>Event Log</h3>
+      <h3>Detected Hazards</h3>
       <div id="event-log" class="log-container"></div>
     </div>
+
   </section>
 </div>
 
-<script type="module" src="app.js"></script>
+<script type="module" src="app.js?v=2"></script>
 </body>
 </html>
